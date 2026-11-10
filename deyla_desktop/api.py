@@ -196,6 +196,8 @@ class DeylaApi:
         from .actions import Actions, AUTOMATION_ACTIONS
         import importlib.util
         supported = {name[3:] for name in dir(Actions) if name.startswith("do_")}
+        if importlib.util.find_spec("docx") is None:
+            supported.discard("write_document")
         if importlib.util.find_spec("playwright") is not None:
             supported.update(name for name in AUTOMATION_ACTIONS if name.startswith("browser_"))
         if os.name == "nt" and importlib.util.find_spec("pywinauto") is not None and importlib.util.find_spec("psutil") is not None:

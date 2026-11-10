@@ -23,6 +23,10 @@ def convert_word(path: Path, destination: Path) -> None:
     _worker("convert", path, destination)
 
 
+def export_pdf(path: Path, destination: Path) -> None:
+    _worker("pdf", path, destination)
+
+
 def _worker(operation: str, path: Path, destination: Path | None = None) -> dict:
     import json
     import os
@@ -32,7 +36,7 @@ def _worker(operation: str, path: Path, destination: Path | None = None) -> dict
     import tempfile
     with tempfile.TemporaryDirectory(prefix="deyla-document-") as temporary:
         folder = Path(temporary)
-        result_file, converted = folder / "result.json", folder / "converted.docx"
+        result_file, converted = folder / "result.json", folder / ("converted.pdf" if operation == "pdf" else "converted.docx")
         command = [sys.executable]
         command += ["--document-worker"] if getattr(sys, "frozen", False) else ["-m", "deyla_desktop.document_worker"]
         command += [operation, str(path), str(result_file), str(converted)]
@@ -62,10 +66,19 @@ def _worker(operation: str, path: Path, destination: Path | None = None) -> dict
             raise ValueError(result.get("error", "Документ не удалось прочитать"))
         if destination is not None:
             if not converted.exists() or converted.stat().st_size > 20 * 1024 * 1024:
-                raise ValueError("Не удалось получить DOCX до 20 МБ")
-            with zipfile.ZipFile(converted) as archive:
-                if "word/document.xml" not in archive.namelist():
-                    raise ValueError("Word не создал корректный DOCX")
+                raise ValueError("Не удалось получить готовый файл до 20 МБ")
+            if operation == "pdf":
+                from pypdf import PdfReader
+                try:
+                    with converted.open("rb") as source:
+                        if not PdfReader(source).pages:
+                            raise ValueError
+                except Exception:
+                    raise ValueError("Word не создал корректный PDF") from None
+            else:
+                with zipfile.ZipFile(converted) as archive:
+                    if "word/document.xml" not in archive.namelist():
+                        raise ValueError("Word не создал корректный DOCX")
             with destination.open("xb") as output, converted.open("rb") as source:
                 shutil.copyfileobj(source, output)
         return result

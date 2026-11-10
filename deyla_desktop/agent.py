@@ -18,7 +18,7 @@ MAX_TASK_SECONDS = 15 * 60
 # Earlier tasks the model sees as context (their questions and answers only)
 KEEP_EXCHANGES = 3
 # The server takes up to 12000 characters a message
-MAX_CONTENT = 11800
+MAX_CONTENT = 24000
 
 
 class Agent:
@@ -77,7 +77,8 @@ class Agent:
                     self.log("action", description)
                 except ActionError as error:
                     result = {"ok": False, "error": str(error)}
-                    self.log("error", f"{description}: {error}")
+                    label = description.split("\n\n", 1)[0]
+                    self.log("error", f"{label}: {error}")
             messages.append({"role": "function", "content": result_text(result)})
             if name in AUTOMATION_ACTIONS and not result.get("ok"):
                 # A timed-out click may have submitted a form. Never blindly replay it.

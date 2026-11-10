@@ -12,7 +12,7 @@ if (-not $SkipInstall) {
 & $pythonExe -m pytest -q
 if ($LASTEXITCODE -ne 0) { throw 'Tests failed; executable was not rebuilt' }
 & $pythonExe -m PyInstaller --noconfirm --clean --onefile --windowed --name Deyla --icon assets\deyla.ico `
-  --collect-submodules pywinauto --collect-submodules comtypes.gen `
+  --collect-submodules pywinauto --collect-submodules comtypes.gen --collect-data docx `
   --add-data "deyla_desktop\web;deyla_desktop\web" --add-data "assets\deyla.ico;assets" run.py
 if ($LASTEXITCODE -ne 0) { throw 'Packaging failed' }
 Write-Host "Built: $(Resolve-Path dist\Deyla.exe)"

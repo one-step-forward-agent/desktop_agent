@@ -40,7 +40,7 @@ AUTOMATION_ACTIONS = {
     "windows_list", "windows_observe", "windows_click", "windows_fill", "windows_type", "windows_press", "windows_select", "windows_read",
 }
 # Reading a page/window may disclose account or document data to the planning backend.
-CONFIRM = {"write_text_file", "write_spreadsheet", "create_folder", "move_file", "read_clipboard", "convert_document", "read_web_page", *AUTOMATION_ACTIONS}
+CONFIRM = {"write_text_file", "write_spreadsheet", "write_document", "export_document", "create_folder", "move_file", "read_clipboard", "convert_document", "read_web_page", *AUTOMATION_ACTIONS}
 
 APPS = {
     "notepad": ["notepad.exe"],
@@ -300,6 +300,8 @@ class Actions:
             "read_text_file": lambda: f"Прочитать файл {a.get('path')}",
             "convert_document": lambda: f"Преобразовать {a.get('path')} в новый DOCX: {a.get('destination') or 'Desktop'}",
             "write_text_file": lambda: ("Дописать в файл " if a.get("append") else "Создать файл ") + f"{a.get('path')}:\n\n{str(a.get('content', ''))[:600]}",
+            "write_document": lambda: f"Создать отчёт Word {a.get('path')}:\n\n{a.get('title') or ''}\n\n{a.get('content') or ''}",
+            "export_document": lambda: f"Экспортировать {a.get('path')} в новый PDF: {a.get('destination') or 'Desktop'}",
             "create_folder": lambda: f"Создать папку {a.get('path')}",
             "move_file": lambda: f"Переместить {a.get('source')}\n→ {a.get('destination')}",
             "open_path": lambda: f"Открыть {a.get('path')}",
@@ -519,6 +521,38 @@ class Actions:
         with file.open("a" if append else "x", encoding="utf-8", newline="") as handle:
             handle.write(("\n" if append and file.stat().st_size else "") + content)
         return {"ok": True, "file": self.show(file), "appended": bool(append)}
+
+    def do_write_document(self, path: str, content: str, title: str | None = None) -> dict:
+        from .word_reports import build_report
+        file = self.resolve(path, must_exist=False)
+        if not file.suffix:
+            file = file.with_suffix(".docx")
+        if file.suffix.lower() != ".docx" or not file.parent.is_dir():
+            raise ActionError("Укажите новый файл .docx в существующей папке пользователя")
+        if file.exists():
+            raise ActionError("Отчёт уже существует. Укажите другое имя; перезапись запрещена")
+        try:
+            data = build_report(content, title)
+        except ImportError:
+            raise ActionError("Для создания DOCX установите python-docx или обновите Deyla.exe") from None
+        except ValueError as error:
+            raise ActionError(str(error)) from None
+        with file.open("xb") as output:
+            output.write(data)
+        return {"ok": True, "file": self.show(file), "bytes": len(data)}
+
+    def do_export_document(self, path: str, destination: str | None = None) -> dict:
+        source, _ = self.readable_file(path)
+        if not source.is_file() or source.suffix.lower() != ".docx" or source.stat().st_size > MAX_DOCUMENT_BYTES:
+            raise ActionError("Для экспорта нужен файл .docx до 20 МБ")
+        target = self.resolve(destination or f"Desktop/{source.stem}.pdf", must_exist=False)
+        if target.suffix.lower() != ".pdf" or target.exists() or not target.parent.is_dir():
+            raise ActionError("Укажите новый файл .pdf в существующей папке пользователя")
+        try:
+            readers.export_pdf(source, target)
+        except ValueError as error:
+            raise ActionError(str(error)) from None
+        return {"ok": True, "file": self.show(target), "bytes": target.stat().st_size}
 
     def do_create_folder(self, path: str) -> dict:
         folder = self.resolve(path, must_exist=False)

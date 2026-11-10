@@ -48,13 +48,26 @@ def word_document(path, converted, result_folder, operation):
         try:
             word = win32com.client.DispatchEx("Word.Application")
         except Exception:
-            raise DocumentError("Для чтения/преобразования .doc нужен установленный Microsoft Word; переименование расширения не конвертирует файл") from None
-        pid = win32process.GetWindowThreadProcessId(word.Hwnd)[1]
-        if pid in existing:
-            raise DocumentError("Не удалось создать отдельный Word; существующий сеанс пользователя не будет изменён")
-        owned = True
-        process = psutil.Process(pid)
-        (result_folder / "word-process.json").write_text(json.dumps({"pid": pid, "created": process.create_time()}), encoding="utf-8")
+            raise DocumentError("Для этой операции нужен установленный Microsoft Word. Создание нового DOCX доступно без Word") from None
+        probe = None
+        try:
+            try:
+                handle = word.Hwnd
+            except AttributeError:
+                # Word exposes HWND on Window, not Application, in some installations.
+                if word.Documents.Count:
+                    raise DocumentError("Не удалось создать отдельный Word; существующий сеанс не будет изменён") from None
+                probe = word.Documents.Add(Visible=False)
+                handle = probe.ActiveWindow.Hwnd
+            pid = win32process.GetWindowThreadProcessId(handle)[1]
+            if pid <= 0 or pid in existing:
+                raise DocumentError("Не удалось создать отдельный Word; существующий сеанс пользователя не будет изменён")
+            owned = True
+            process = psutil.Process(pid)
+            (result_folder / "word-process.json").write_text(json.dumps({"pid": pid, "created": process.create_time()}), encoding="utf-8")
+        finally:
+            if probe is not None:
+                probe.Close(SaveChanges=0)
         word.Visible = False
         word.DisplayAlerts = 0
         word.AutomationSecurity = 3  # msoAutomationSecurityForceDisable, before opening untrusted documents.
@@ -63,9 +76,11 @@ def word_document(path, converted, result_folder, operation):
         try:
             document = word.Documents.Open(FileName=str(path), ConfirmConversions=False, ReadOnly=True,
                                            AddToRecentFiles=False, PasswordDocument="", WritePasswordDocument="", Visible=False, NoEncodingDialog=True)
-            text = document.Content.Text[:MAX_CHARS]
+            text = "" if operation == "pdf" else document.Content.Text[:MAX_CHARS]
             if operation == "convert":
                 document.SaveAs2(FileName=str(converted), FileFormat=12, AddToRecentFiles=False)  # wdFormatXMLDocument
+            elif operation == "pdf":
+                document.ExportAsFixedFormat(OutputFileName=str(converted), ExportFormat=17, OpenAfterExport=False)  # wdExportFormatPDF
             return {"ok": True, "text": text}
         finally:
             word.Options.UpdateLinksAtOpen = old_links
@@ -88,11 +103,11 @@ def main(arguments=None):
     result_file = Path(result_name)
     try:
         path = Path(filename).resolve(strict=True)
-        if operation not in {"read", "convert"} or path.stat().st_size > 20 * 1024 * 1024:
+        if operation not in {"read", "convert", "pdf"} or path.stat().st_size > 20 * 1024 * 1024:
             raise DocumentError("Неподдерживаемая операция или документ больше 20 МБ")
         if path.suffix.lower() == ".pdf" and operation == "read":
             result = read_pdf(path)
-        elif path.suffix.lower() == ".doc":
+        elif (path.suffix.lower() == ".doc" and operation in {"read", "convert"}) or (path.suffix.lower() == ".docx" and operation == "pdf"):
             result = word_document(path, Path(converted_name), result_file.parent, operation)
         else:
             raise DocumentError("Неподдерживаемый формат документа")

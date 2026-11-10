@@ -9,6 +9,22 @@ import pytest
 pytestmark = pytest.mark.skipif(os.name != "nt" or os.getenv("DEYLA_TEST_WINDOWS") != "1", reason="Opt-in synthetic native Windows test")
 
 
+def test_windows_controller_initializes_in_a_fresh_worker():
+    import sys
+    source = """
+from concurrent.futures import ThreadPoolExecutor
+from deyla_desktop.windows import Windows
+def check():
+    controller = Windows()
+    controller.close()
+with ThreadPoolExecutor(1) as pool:
+    pool.submit(check).result(timeout=10)
+"""
+    result = subprocess.run([sys.executable, "-c", source], cwd=Path(__file__).resolve().parents[1],
+                            creationflags=subprocess.CREATE_NO_WINDOW, capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+
+
 def test_native_windows_inspect_fill_invoke_read(tmp_path):
     from deyla_desktop.windows import Windows
     from pywinauto import Desktop

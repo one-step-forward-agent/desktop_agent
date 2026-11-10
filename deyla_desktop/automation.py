@@ -55,8 +55,12 @@ class Automation:
             except Exception:
                 # Framework errors can contain field contents, URLs, or page source.
                 result.set_exception(AutomationError("Не удалось выполнить действие. Обновите состояние окна и повторите; действие могло выполниться частично."))
-        if browser is not None:
-            browser.close()
+        try:
+            if browser is not None:
+                browser.close()
+        finally:
+            if windows is not None:
+                windows.close()
 
     def close(self):
         with self._lock:

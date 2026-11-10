@@ -13,23 +13,39 @@ KEYS = {"Enter": "{ENTER}", "Tab": "{TAB}", "Escape": "{ESC}", "ArrowDown": "{DO
 
 class Windows:
     def __init__(self, desktop=None, process_name=None):
+        self._com_cleanup = None
         if desktop is None:
             if os.name != "nt":
                 raise AutomationError("Управление программами доступно только в Windows")
             try:
-                import comtypes
-                comtypes.CoInitializeEx(0)
                 from pywinauto import Desktop
+                import comtypes
                 import psutil
             except ImportError:
                 raise AutomationError("Установите pywinauto и psutil из requirements-dev.txt") from None
-            desktop = NativeDesktop(Desktop(backend="uia"), lambda pid: psutil.Process(pid).name().lower())
+            # Importing pywinauto negotiates the apartment mode. Use that same mode
+            # on this worker, rather than switching an already initialized STA to MTA.
+            comtypes.CoInitializeEx()
+            self._com_cleanup = comtypes.CoUninitialize
+            try:
+                desktop = NativeDesktop(Desktop(backend="uia"), lambda pid: psutil.Process(pid).name().lower())
+            except Exception:
+                self._com_cleanup()
+                raise
             process_name = lambda pid: psutil.Process(pid).name().lower()
         self._desktop = desktop
         logging.getLogger("pywinauto").disabled = True
         self._process_name = process_name
         self._windows, self._controls = {}, {}
         self._window = None
+
+    def close(self):
+        self._windows.clear()
+        self._controls.clear()
+        self._window = self._desktop = None
+        if self._com_cleanup is not None:
+            self._com_cleanup()
+            self._com_cleanup = None
 
     def run(self, name, arguments):
         handlers = {"list": self.list, "observe": self.observe, "click": self.click,
