@@ -6,13 +6,15 @@ and when the user presses "Stop".
 
 import platform
 import threading
+import time
 from datetime import datetime
 from typing import Callable
 
-from .actions import CONFIRM, ActionError, Actions, result_text
+from .actions import CONFIRM, AUTOMATION_ACTIONS, ActionError, Actions, result_text
 from .api import DeylaApi
 
-MAX_STEPS = 16
+MAX_STEPS = 40
+MAX_TASK_SECONDS = 15 * 60
 # Earlier tasks the model sees as context (their questions and answers only)
 KEEP_EXCHANGES = 3
 # The server takes up to 12000 characters a message
@@ -28,16 +30,31 @@ class Agent:
         self.log = log
         self.earlier: list[dict] = []
         self.stop = threading.Event()
+        self._running = threading.Lock()
 
-    def run(self, task: str) -> str:
+    def run(self, task: str, attachments: list[str] | None = None) -> str:
+        if not self._running.acquire(blocking=False):
+            raise ActionError("Задача уже выполняется. Сначала остановите её или дождитесь результата.")
+        try:
+            return self._run(task, attachments)
+        finally:
+            self._running.release()
+
+    def _run(self, task: str, attachments: list[str] | None = None) -> str:
         self.stop.clear()
+        started = time.monotonic()
+        if attachments:
+            task = self.actions.prepare_task(task, attachments)
         messages = [{"role": "user", "content": task[:MAX_CONTENT]}]
         answer = ""
         for _ in range(MAX_STEPS):
-            if self.stop.is_set():
+            if self.stop.is_set() or time.monotonic() - started > MAX_TASK_SECONDS:
                 answer = "Остановлено."
                 break
             reply = self.api.step(self.earlier + messages, platform.platform(), datetime.now().astimezone().isoformat(timespec="minutes"))
+            if self.stop.is_set():
+                answer = "Остановлено."
+                break
             action = reply.get("action")
             if not action:
                 answer = reply.get("content") or ""
@@ -51,6 +68,10 @@ class Agent:
                 result = {"ok": False, "error": "Пользователь не разрешил это действие"}
                 self.log("denied", description)
             else:
+                # Stop may have been pressed while the confirmation dialog was open.
+                if self.stop.is_set() or time.monotonic() - started > MAX_TASK_SECONDS:
+                    answer = "Остановлено."
+                    break
                 try:
                     result = self.actions.run(name, arguments)
                     self.log("action", description)
@@ -58,11 +79,19 @@ class Agent:
                     result = {"ok": False, "error": str(error)}
                     self.log("error", f"{description}: {error}")
             messages.append({"role": "function", "content": result_text(result)})
+            if name in AUTOMATION_ACTIONS and not result.get("ok"):
+                # A timed-out click may have submitted a form. Never blindly replay it.
+                answer = "Остановлено: " + str(result.get("error", "Действие не выполнено"))
+                break
         else:
             answer = "Задача заняла слишком много шагов — я остановилась. Попробуйте разбить её на части."
         answer = answer.strip() or "Готово."
-        self.earlier = (self.earlier + [{"role": "user", "content": task[:MAX_CONTENT]}, {"role": "assistant", "content": answer[:MAX_CONTENT]}])[-2 * KEEP_EXCHANGES:]
+        if not self.stop.is_set():
+            self.earlier = (self.earlier + [{"role": "user", "content": task[:MAX_CONTENT]}, {"role": "assistant", "content": answer[:MAX_CONTENT]}])[-2 * KEEP_EXCHANGES:]
         return answer
 
     def forget(self) -> None:
+        self.stop.set()
         self.earlier = []
+        self.actions.attached.clear()
+        self.actions.close_automation()

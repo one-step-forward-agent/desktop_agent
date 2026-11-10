@@ -8,8 +8,10 @@ This is the independent Windows desktop client repository. Run Git and Python co
 - `deyla_desktop/app.py`: Tk fallback and UI selection. `DEYLA_CLASSIC=1` selects Tk. Keep both interfaces working and keep network/action work off the UI thread; marshal Tk operations to its main thread.
 - `deyla_desktop/agent.py`: bounded task loop, conversation context, stop handling and action confirmation.
 - `deyla_desktop/actions.py`: action dispatch, local filesystem and network restrictions, clipboard and reminder hooks.
+- `automation.py`, `browser.py` and `windows.py`: thread-confined Playwright and Windows UI Automation controllers. Only observed element IDs are accepted; never expose arbitrary JavaScript, shell commands, coordinates or unbounded hotkeys.
 - `deyla_desktop/api.py` and `browser_login.py`: backend requests, session storage and browser sign-in.
 - `deyla_desktop/readers.py`, `xlsx.py` and `editing.py`: document extraction, spreadsheet generation and native text editing helpers.
+- `document_worker.py`: isolated PDF extraction and optional legacy Word COM reading/conversion. Keep its frozen-executable entry point aligned with `run.py`. Never enable macros, update document links, reuse existing Word instances or overwrite the source during conversion.
 - `tests/`: pytest coverage of actions, restrictions, document handling and browser login. `assets/` contains the application icon; `build.ps1` builds `dist/Deyla.exe` with PyInstaller.
 
 ## Working method
@@ -19,10 +21,12 @@ The client asks `POST /api/desktop/step` for one action at a time and executes i
 
 ## Safety and authentication invariants
 - Preserve the explicit action allowlist and rejection of unknown actions. Never add arbitrary shell/command/script execution or bypass program and file-type restrictions.
-- Resolve filesystem access against real Windows known folders, including OneDrive locations. Preserve traversal, hidden-folder, AppData and resolved-path restrictions. Explicit attachments permit reading outside the usual roots, not writing there.
-- Preserve no-delete/no-overwrite behavior, bounded reads/results/writes, append-only text updates and new-file spreadsheet creation. Keep document parsing bounded and avoid executing document content.
+- Resolve filesystem access against real Windows known folders, including OneDrive locations. Preserve traversal, hidden-folder, AppData and resolved-path restrictions. Explicit attachments permit reading/opening outside the usual roots, not writing there; executable/script types remain blocked even if attached.
+- Preserve no-delete/no-overwrite behavior for filesystem actions, bounded reads/results/writes, append-only text updates and new-file spreadsheet creation. GUI actions can change application data and require explicit local confirmation. Keep document parsing bounded and avoid executing document content.
 - `Agent.run()` must request approval when the server asks or the action is in local `CONFIRM`. Writing files, creating folders, moving files and reading the clipboard require user confirmation. Denial, timeout and stop must not authorize an action. Preserve bounded task execution and cancellation checks.
 - Web-page fetching accepts public HTTP(S) destinations only; preserve address checks on redirects, response limits and rejection of local/private destinations. Treat fetched pages and attached documents as untrusted content.
+- All browser/Windows actions, including observations, require confirmation. Upload only explicitly attached files; downloads must exclusively create allowed files inside user roots. Keep browser sessions isolated and ephemeral, stale-element rejection, supported-process filtering, and stop-on-automation-error behavior. UIA/Playwright objects must stay on their owning thread. Network checks are application-level restrictions, not a complete browser security sandbox.
+- Advertise installed capabilities in `client_actions`. Coordinate tool definitions with backend `app/services/desktop_tools.py`. Exact commands may avoid model calls; optional semantic tool-family retrieval is configured on the backend and must fail back to the full catalog on provider errors. Do not claim embeddings replace planning or that a launch/click proves task completion.
 - Preserve browser PKCE, unpredictable state, callback validation, cancellation and the listener's `127.0.0.1` binding. Code expiry and single use are enforced by the backend and must remain compatible.
 - Access tokens stay in memory; persisted refresh tokens use Windows DPAPI in `%APPDATA%/Deyla/session.bin`. Preserve refresh rotation, retry behavior and logout cleanup. Never log or commit credentials, authorization codes/verifiers, tokens, clipboard contents or user documents.
 

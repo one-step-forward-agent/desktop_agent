@@ -181,6 +181,7 @@ class App(UiHooks):
     def _chat(self) -> None:
         self.root.unbind("<Return>")
         self._clear()
+        self._in_background(self.api.capability_status, lambda status, error: self._write("hint", status["warning"]) if status and status.get("warning") else None)
         top = ttk.Frame(self.frame)
         top.pack(fill="x")
         ttk.Label(top, text="Дейла", font=("Segoe UI", 14, "bold")).pack(side="left")
@@ -290,7 +291,7 @@ class App(UiHooks):
         shown = typed + ("\n" if typed and files else "") + "\n".join(f"📎 {path}" for path in files)
         self._write("user", shown)
         # The agent reads the attached files by these full paths (actions.attach allowed them)
-        text = (typed or "Посмотри приложенные файлы") + "".join(f"\nПриложен файл: {path}" for path in files)
+        text = typed or "Посмотри приложенные файлы"
         self.busy = True
         self.send_button.state(["disabled"])
         self.stop_button.state(["!disabled"])
@@ -304,7 +305,7 @@ class App(UiHooks):
                 return
             self._write("error" if error else "agent", getattr(error, "detail", str(error)) if error else answer)
 
-        self._in_background(lambda: self.agent.run(text), done)
+        self._in_background(lambda: self.agent.run(text, attachments=files), done)
 
     def _new(self) -> None:
         if self.busy:
@@ -316,17 +317,13 @@ class App(UiHooks):
         self._write("hint", EXAMPLES)
 
     def _help(self) -> None:
+        from .webapp import ABILITIES
         folders = ", ".join(self.actions.roots)
         messagebox.showinfo(
             "Что умеет Дейла на компьютере",
-            "• открыть сайт, поиск в интернете или стандартную программу (Блокнот, Калькулятор, Проводник, Paint, Параметры, Диспетчер задач, Ножницы)\n"
-            f"• найти, показать, прочитать (текст, Word, Excel), открыть файлы в папках: {folders}\n"
-            "• прочитать файлы, которые вы приложили кнопкой 📎 или вставили из Проводника, где бы они ни лежали\n"
-            "• узнать курсы валют ЦБ РФ, прочитать текст веб-страницы\n"
-            "• создать таблицу Excel, текстовый файл или папку, переместить или переименовать файл — только с вашего разрешения\n"
-            "• буфер обмена (чтение — с разрешения), таймер-напоминание, сведения о компьютере\n\n"
-            "Дейла не удаляет и не перезаписывает файлы, не запускает команды и программы не из списка, "
-            "не видит системные и скрытые папки. За одну задачу — не больше 12 действий.",
+            "\n".join("• " + line.format(folders=folders) for line in ABILITIES)
+            + "\n\nДо 32 действий на задачу. Пароли и коды входа вводите самостоятельно. "
+            "Управление интерфейсом может изменить данные программы или сайта; проверяйте подтверждения.",
             parent=self.root,
         )
 
@@ -339,6 +336,8 @@ class App(UiHooks):
     def _close(self) -> None:
         if getattr(self, "browser_login", None):
             self.browser_login.cancel()
+        self.agent.stop.set()
+        self.actions.close_automation()
         self.root.destroy()
 
     def run(self) -> None:

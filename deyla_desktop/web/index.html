@@ -193,6 +193,7 @@ textarea:focus, textarea:focus-visible { outline: none; }
 </section>
 
 <section id="chat" class="screen">
+  <div id="capability-status" class="foot" role="status"></div>
   <header>
     <span data-logo></span>
     <div><div class="name">Deyla</div><div class="role">помощник на компьютере</div></div>
@@ -364,7 +365,15 @@ function loginScreen(problem) {
   $("browser-login").disabled = false;
   $("browser-note").className = "note"; $("browser-note").textContent = "Google, Яндекс или email — откроется сайт Deyla, нажмите там «Разрешить»";
 }
-function chatScreen() { show("chat"); if (!$("log").children.length) hint(); $("input").focus(); }
+async function chatScreen() {
+  show("chat"); if (!$("log").children.length) hint(); $("input").focus();
+  try {
+    const state = await api().status();
+    $("server").textContent = `Сервер: ${state.server} · ${state.automation ? "управление компьютером доступно" : "ограниченный режим"}`;
+    $("capability-status").textContent = state.automation ? "Управление сайтами и программами доступно" : "Ограниченный режим: серверу требуется обновление";
+    if (state.warning) ui.step("error", state.warning);
+  } catch (_) { toast("Не удалось проверить возможности сервера"); }
+}
 $("browser-login").onclick = async () => {
   $("browser-login").disabled = true;
   $("browser-note").className = "note"; $("browser-note").textContent = "Ждём подтверждения в браузере…";

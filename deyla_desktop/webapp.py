@@ -48,9 +48,12 @@ def own_taskbar_icon() -> None:
 
 
 ABILITIES = [
+    "Работать на сайтах в отдельном браузере: читать страницы, заполнять поля, нажимать кнопки, переключать вкладки, загружать приложенные файлы и скачивать новые — с подтверждением",
+    "Работать с доступными элементами окон Блокнота, Калькулятора, Paint, Word, Excel и PowerPoint через Windows UI Automation — с подтверждением",
     "Открыть сайт, поиск в интернете или стандартную программу: Блокнот, Калькулятор, Проводник, Paint, Параметры, Диспетчер задач, Ножницы",
-    "Найти, показать, прочитать (текст, Word, Excel) и открыть файлы в папках: {folders}",
-    "Прочитать файлы, которые вы приложили 📎, перетащили в окно или вставили из Проводника, где бы они ни лежали",
+    "Найти, показать, прочитать (текст, PDF, Word, Excel) и открыть файлы в папках: {folders}",
+    "Прочитать или открыть явно приложенные файлы, где бы они ни лежали; PDF с текстом читается автоматически, старый .doc требует Word",
+    "Преобразовать .doc в новый .docx при установленном Microsoft Word — с подтверждением",
     "Узнать курсы валют ЦБ РФ и прочитать текст веб-страницы",
     "Создать таблицу Excel, текстовый файл или папку, переместить или переименовать файл — только с вашего разрешения",
     "Буфер обмена (чтение — с разрешения), таймер-напоминание, сведения о компьютере",
@@ -192,6 +195,7 @@ class Bridge(UiHooks):
             self._login = None
 
     def logout(self) -> None:
+        self.stop()
         self._agent.forget()
         self._api.logout()
 
@@ -202,9 +206,9 @@ class Bridge(UiHooks):
                 attached.append(str(self._actions.attach(path)))
             except Exception:
                 continue
-        task = (text.strip() or "Посмотри приложенные файлы") + "".join(f"\nПриложен файл: {path}" for path in attached)
+        task = text.strip() or "Посмотри приложенные файлы"
         try:
-            return {"answer": self._agent.run(task)}
+            return {"answer": self._agent.run(task, attachments=attached)}
         except ApiError as error:
             if error.status == 401:
                 return {"relogin": True, "error": "Сессия истекла, войдите снова"}
@@ -219,11 +223,15 @@ class Bridge(UiHooks):
             event.set()
 
     def new_chat(self) -> None:
+        self.stop()
         self._agent.forget()
 
     def abilities(self) -> list[str]:
         folders = ", ".join(self._actions.roots)
         return [line.format(folders=folders) for line in ABILITIES]
+
+    def status(self) -> dict:
+        return self._api.capability_status()
 
     def pick_files(self) -> list[str]:
         import webview
@@ -242,6 +250,7 @@ class Bridge(UiHooks):
         if self._login:
             self._login.cancel()
         self.stop()
+        self._actions.close_automation()
 
 
 def _on_drop(bridge: Bridge, event: dict) -> None:

@@ -109,6 +109,20 @@ class DeylaApi:
         self.store = store or SessionStore()
         self.language = language
         self.access_token: str | None = None
+        self._capabilities: dict | None = None
+
+    def capability_status(self) -> dict:
+        if self._capabilities is None:
+            try:
+                body = self._authed("GET", "/api/desktop/actions")
+                names = {item.get("name") for item in body.get("actions", []) if isinstance(item, dict)}
+                missing = not {"browser_open", "browser_fill", "windows_observe"} <= names
+                self._capabilities = {"automation": not missing, "warning": (
+                    "Ограниченный режим сервера: управление сайтами и программами недоступно. Требуется обновить backend; обновления exe недостаточно. Чтение приложенных PDF работает локально."
+                    if missing else ""), "server": self.base_url}
+            except ApiError:
+                return {"automation": False, "warning": "Не удалось проверить инструменты сервера. Проверьте подключение и вход.", "server": self.base_url}
+        return self._capabilities
 
     def _request(self, method: str, path: str, body: dict | None = None, auth: bool = True) -> dict:
         data = json.dumps(body, ensure_ascii=False).encode() if body is not None else None
@@ -157,6 +171,7 @@ class DeylaApi:
             return False
 
     def logout(self) -> None:
+        self._capabilities = None
         token = self.store.load()
         try:
             if token:
@@ -178,4 +193,12 @@ class DeylaApi:
         return self._authed("GET", "/api/me")
 
     def step(self, messages: list[dict], os_name: str, local_time: str) -> dict:
-        return self._authed("POST", "/api/desktop/step", {"messages": messages, "client_version": __version__, "os": os_name, "local_time": local_time})
+        from .actions import Actions, AUTOMATION_ACTIONS
+        import importlib.util
+        supported = {name[3:] for name in dir(Actions) if name.startswith("do_")}
+        if importlib.util.find_spec("playwright") is not None:
+            supported.update(name for name in AUTOMATION_ACTIONS if name.startswith("browser_"))
+        if os.name == "nt" and importlib.util.find_spec("pywinauto") is not None and importlib.util.find_spec("psutil") is not None:
+            supported.update(name for name in AUTOMATION_ACTIONS if name.startswith("windows_"))
+        return self._authed("POST", "/api/desktop/step", {"messages": messages, "client_version": __version__, "os": os_name,
+            "local_time": local_time, "client_actions": sorted(supported)})
